@@ -1,0 +1,50 @@
+{
+  "name": "dsh-computer-use",
+  "version": "0.1.0",
+  "description": "Computer use for DeepSeek Harness: js and js_reset tools that read windows, click, type, and screenshot macOS apps through the locally installed ChatGPT app.",
+  "license": "MIT",
+  "author": "zhaoshang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shang-ZZ/dsh-computer-use.git"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "computer-use",
+    "macos",
+    "mcp"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "adapters/*.mjs",
+    "runtime/*.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "assets/icon-180.png",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

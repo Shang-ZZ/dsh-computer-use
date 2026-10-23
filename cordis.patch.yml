@@ -1,0 +1,5 @@
+- insert:
+    - id: dsh-computer-use
+      name: 'dsh-computer-use'
+      config:
+        appPath: /Applications/ChatGPT.app
