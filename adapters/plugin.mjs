@@ -62,6 +62,21 @@ export function extractTargetApp(code) {
   return null;
 }
 
+/**
+ * The most recent screenshot in a `js` tool result: the last image block's base64 and MIME type,
+ * or null. This is the live picture of the window the agent is operating.
+ */
+export function extractImage(result) {
+  if (!result || !Array.isArray(result.content)) return null;
+  for (let i = result.content.length - 1; i >= 0; i--) {
+    const block = result.content[i];
+    if (block?.type === 'image' && typeof block.data === 'string' && block.data && block.mimeType) {
+      return { data: block.data, mimeType: block.mimeType };
+    }
+  }
+  return null;
+}
+
 const cancel = () => ({ action: 'cancel' });
 
 /** Ask the person through DSH's question card; any refusal, error or free text cancels. */
@@ -93,8 +108,8 @@ export async function apply(ctx, config = {}, deps = {}) {
   // Tool calls in flight -> their agent: an approval is asked in the one agent with a call in flight.
   const inFlight = new Map();
   const log = message => ctx.logger?.warn?.(message);
-  // Sidebar monitor state: the app the agent is currently targeting and when it last changed.
-  const monitor = { app: null, at: 0 };
+  // Sidebar monitor state: the app the agent is targeting, its latest screenshot, and when it changed.
+  const monitor = { app: null, at: 0, image: null, imageSeq: 0 };
 
   const client = createClient({
     command: commandFrom(config),
@@ -222,13 +237,18 @@ export async function apply(ctx, config = {}, deps = {}) {
           const app = extractTargetApp(args?.code);
           if (app) { monitor.app = app; monitor.at = Date.now(); }
         } else if (tool.name === 'js_reset') {
-          monitor.app = null; monitor.at = Date.now();
+          monitor.app = null; monitor.image = null; monitor.at = Date.now();
         }
         try {
-          return await persistAudioContent(await client.call(tool.name, args, {
+          const result = await client.call(tool.name, args, {
             sessionId: exec.agent.session.id, turnId, toolCallId: exec.callId, signal: exec.signal,
             model: exec.agent.options?.model, reasoningEffort: exec.agent.options?.reasoningEffort,
-          }));
+          });
+          if (tool.name === 'js') {
+            const image = extractImage(result);
+            if (image) { monitor.image = image; monitor.imageSeq += 1; monitor.at = Date.now(); }
+          }
+          return await persistAudioContent(result);
         } finally {
           inFlight.delete(exec);
         }
@@ -254,7 +274,19 @@ export async function apply(ctx, config = {}, deps = {}) {
         if (pathname === '/dsh-computer-use/window') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
           res.setHeader('Cache-Control', 'no-store');
-          res.end(JSON.stringify({ app: monitor.app, at: monitor.at }));
+          res.end(JSON.stringify({
+            app: monitor.app,
+            at: monitor.at,
+            imageSeq: monitor.imageSeq,
+            hasImage: monitor.image != null,
+          }));
+          return;
+        }
+        if (pathname === '/dsh-computer-use/screenshot') {
+          if (!monitor.image) { res.statusCode = 404; res.end('no screenshot'); return; }
+          res.setHeader('Content-Type', monitor.image.mimeType);
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(Buffer.from(monitor.image.data, 'base64'));
           return;
         }
         res.statusCode = 404;

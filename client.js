@@ -7,20 +7,6 @@ window.__ModuleLoader__.load({
 
     const v = (name, fallback) => `var(--dsw-alias-${name}, ${fallback})`;
 
-    // Sidebar icon: a window with a pointer, drawn in the panel row's currentColor.
-    function PanelIcon({ size }) {
-      return h(
-        'svg',
-        { viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
-        h('rect', { x: 8, y: 12, width: 48, height: 38, rx: 6, fill: 'none', stroke: 'currentColor', strokeWidth: 3 }),
-        h('line', { x1: 8, y1: 22, x2: 56, y2: 22, stroke: 'currentColor', strokeWidth: 3 }),
-        h('path', {
-          d: 'M27 27 L27 48 L32 43 L37 52 L42 50 L37 41 L44 41 Z',
-          fill: 'currentColor',
-        })
-      );
-    }
-
     function ageText(ms) {
       if (!ms) return '';
       const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -32,8 +18,8 @@ window.__ModuleLoader__.load({
     // A target is "live" if it changed within the last 15 seconds.
     const LIVE_WINDOW_MS = 15000;
 
-    function WindowMonitor() {
-      const [state, setState] = useState({ app: null, at: 0 });
+    function MonitorView() {
+      const [state, setState] = useState({ app: null, at: 0, imageSeq: 0, hasImage: false });
       useEffect(() => {
         let alive = true;
         let timer;
@@ -42,7 +28,12 @@ window.__ModuleLoader__.load({
             const r = await fetch('/dsh-computer-use/window', { cache: 'no-store' });
             if (!r.ok) return;
             const data = await r.json();
-            if (alive) setState({ app: data.app ?? null, at: data.at ?? 0 });
+            if (alive) setState({
+              app: data.app ?? null,
+              at: data.at ?? 0,
+              imageSeq: data.imageSeq ?? 0,
+              hasImage: !!data.hasImage,
+            });
           } catch {
             // The host route is not reachable; keep the last state.
           }
@@ -53,42 +44,52 @@ window.__ModuleLoader__.load({
       }, []);
 
       const live = state.app != null && Date.now() - state.at < LIVE_WINDOW_MS;
+      const imgSrc = state.hasImage ? `/dsh-computer-use/screenshot?t=${state.imageSeq}` : null;
+
       const rootStyle = {
-        display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
-        backgroundColor: v('canvas', '#fff'), color: v('text', '#17181c'), fontFamily: 'inherit',
+        boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, width: '100%',
+        backgroundColor: v('bg-base', '#fff'), color: v('label-primary', '#17181c'), fontFamily: 'inherit',
       };
       const headerStyle = {
-        padding: '12px 14px', borderBottom: `1px solid ${v('border', '#e6e7ea')}`,
+        padding: '10px 14px', borderBottom: `1px solid ${v('border-l1', '#e6e7ea')}`,
         display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14, flexShrink: 0,
       };
       const dotStyle = {
         width: 9, height: 9, borderRadius: '50%',
-        backgroundColor: live ? '#16a34a' : '#9ca3af',
-        flexShrink: 0,
+        backgroundColor: live ? '#16a34a' : '#9ca3af', flexShrink: 0,
       };
-      const bodyStyle = { padding: 16, display: 'flex', flexDirection: 'column', gap: 8, flex: 1, overflowY: 'auto' };
-      const appNameStyle = { fontSize: 17, fontWeight: 600, wordBreak: 'break-word' };
-      const metaStyle = { fontSize: 12, opacity: 0.6, lineHeight: 1.4 };
-      const idleStyle = { fontSize: 13, opacity: 0.65, lineHeight: 1.5 };
+      const bodyStyle = { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' };
+      const screenWrapStyle = {
+        flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 12, backgroundColor: '#0f1115',
+      };
+      const imgStyle = { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 6 };
+      const metaStyle = { padding: '10px 14px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 };
+      const appNameStyle = { fontWeight: 600, wordBreak: 'break-word' };
+      const metaAgeStyle = { fontSize: 12, opacity: 0.6, marginLeft: 'auto' };
+      const emptyStyle = { padding: 24, fontSize: 13, opacity: 0.65, lineHeight: 1.6 };
 
       return h(
         'div',
         { style: rootStyle },
-        h(
-          'div',
-          { style: headerStyle },
-          h('span', { style: dotStyle }),
-          'Computer Use'
-        ),
+        h('div', { style: headerStyle }, h('span', { style: dotStyle }), 'Computer Use'),
         h(
           'div',
           { style: bodyStyle },
+          imgSrc
+            ? h('div', { style: screenWrapStyle }, h('img', { style: imgStyle, src: imgSrc, alt: state.app || 'screen' }))
+            : h('div', { style: emptyStyle },
+                'No screen captured yet. When the agent controls an app through computer use, its window shows up here live.')
+        ),
+        h(
+          'div',
+          { style: metaStyle },
           live
             ? h(React.Fragment, null,
-                h('div', { style: appNameStyle }, state.app),
-                h('div', { style: metaStyle }, `The agent is controlling this app · ${ageText(state.at)}`))
-            : h('div', { style: idleStyle },
-                'Idle. When the agent controls an app through computer use, its window shows up here in real time.')
+                h('span', { style: appNameStyle }, state.app || 'an app'),
+                h('span', { style: metaAgeStyle }, ageText(state.at)))
+            : h('span', { style: { fontSize: 12, opacity: 0.6 } }, 'Idle')
         )
       );
     }
@@ -96,13 +97,10 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('main', () =>
-          ctx.slots.register({ name: 'main', key: 'computer-use-monitor' }, WindowMonitor)
-        );
-        ctx.slots.inject('sidebar.panellist', () =>
+        ctx.slots.inject('conversation.view', () =>
           ctx.slots.register(
-            { name: 'sidebar.panellist', id: 'computer-use-monitor', order: 31, label: () => 'Computer Use' },
-            PanelIcon
+            { name: 'conversation.view', id: 'computer-use', order: 40, label: () => 'Computer Use' },
+            (props) => h(MonitorView, props)
           )
         );
       },
