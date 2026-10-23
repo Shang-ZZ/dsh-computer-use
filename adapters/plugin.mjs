@@ -8,7 +8,7 @@ import { createCuaClient, nativeAppApprovalOptions, nativeAppApprovalResponse } 
 import { persistAudioContent } from './audio-files.mjs';
 
 export const name = 'dsh-computer-use';
-export const inject = ['tools', 'systemPrompt'];
+export const inject = ['tools', 'systemPrompt', 'webServer', 'connection'];
 
 /** After DSH's MCP servers section (MCP_SERVERS, 3100 in @deepseek-ai/dsh-system-prompt). */
 export const PROMPT_ORDER = 3100;
@@ -49,6 +49,19 @@ export function launcherEnvironment(config, env = process.env) {
   return result;
 }
 
+/**
+ * The app the agent is about to control, read from a `js` call's JavaScript: the first
+ * `getApp("…")` / `get_app_state("…")` target, or null. Heuristic for the sidebar monitor.
+ */
+export function extractTargetApp(code) {
+  if (typeof code !== 'string' || !code) return null;
+  let match = /\bgetApp\(\s*["'`]([^"'`]+)["'`]\s*\)/.exec(code);
+  if (match) return match[1];
+  match = /\bget_app_state\(\s*["'`]([^"'`]+)["'`]\s*\)/.exec(code);
+  if (match) return match[1];
+  return null;
+}
+
 const cancel = () => ({ action: 'cancel' });
 
 /** Ask the person through DSH's question card; any refusal, error or free text cancels. */
@@ -80,6 +93,8 @@ export async function apply(ctx, config = {}, deps = {}) {
   // Tool calls in flight -> their agent: an approval is asked in the one agent with a call in flight.
   const inFlight = new Map();
   const log = message => ctx.logger?.warn?.(message);
+  // Sidebar monitor state: the app the agent is currently targeting and when it last changed.
+  const monitor = { app: null, at: 0 };
 
   const client = createClient({
     command: commandFrom(config),
@@ -203,6 +218,12 @@ export async function apply(ctx, config = {}, deps = {}) {
       async call(args, exec) {
         const turnId = await turnOf(exec.agent);
         inFlight.set(exec, exec.agent);
+        if (tool.name === 'js') {
+          const app = extractTargetApp(args?.code);
+          if (app) { monitor.app = app; monitor.at = Date.now(); }
+        } else if (tool.name === 'js_reset') {
+          monitor.app = null; monitor.at = Date.now();
+        }
         try {
           return await persistAudioContent(await client.call(tool.name, args, {
             sessionId: exec.agent.session.id, turnId, toolCallId: exec.callId, signal: exec.signal,
@@ -214,5 +235,33 @@ export async function apply(ctx, config = {}, deps = {}) {
       },
     }));
   }
+  // Sidebar monitor HTTP route (behind the connection trust fence).
+  const webServer = ctx.webServer;
+  if (webServer) {
+    const rejected = (req, res) => {
+      const rejection = ctx.connection.requestRejection(req);
+      if (rejection === undefined) return false;
+      res.statusCode = rejection;
+      res.end();
+      return true;
+    };
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/dsh-computer-use',
+      handler(req, res) {
+        if (rejected(req, res)) return;
+        const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+        if (pathname === '/dsh-computer-use/window') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(JSON.stringify({ app: monitor.app, at: monitor.at }));
+          return;
+        }
+        res.statusCode = 404;
+        res.end('not found');
+      },
+    }));
+  }
+
   ctx.systemPrompt.section({ name: PROMPT_SECTION, order: PROMPT_ORDER, interpolate: false, text: () => instructions });
 }
