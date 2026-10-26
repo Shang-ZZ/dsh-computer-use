@@ -7,6 +7,16 @@ window.__ModuleLoader__.load({
 
     const v = (name, fallback) => `var(--dsw-alias-${name}, ${fallback})`;
 
+    function PanelIcon({ size }) {
+      return h(
+        'svg',
+        { viewBox: '0 0 64 64', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
+        h('rect', { x: 8, y: 12, width: 48, height: 38, rx: 6, fill: 'none', stroke: 'currentColor', strokeWidth: 3 }),
+        h('line', { x1: 8, y1: 22, x2: 56, y2: 22, stroke: 'currentColor', strokeWidth: 3 }),
+        h('path', { d: 'M27 27 L27 48 L32 43 L37 52 L42 50 L37 41 L44 41 Z', fill: 'currentColor' })
+      );
+    }
+
     function ageText(ms) {
       if (!ms) return '';
       const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -15,11 +25,10 @@ window.__ModuleLoader__.load({
       return `${Math.round(s / 60)}m ago`;
     }
 
-    // A target is "live" if it changed within the last 15 seconds.
     const LIVE_WINDOW_MS = 15000;
 
-    function MonitorView() {
-      const [state, setState] = useState({ app: null, at: 0, imageSeq: 0, hasImage: false });
+    function WindowMonitor() {
+      const [state, setState] = useState({ app: null, at: 0, screenSeq: 0, hasFrame: false });
       useEffect(() => {
         let alive = true;
         let timer;
@@ -31,20 +40,20 @@ window.__ModuleLoader__.load({
             if (alive) setState({
               app: data.app ?? null,
               at: data.at ?? 0,
-              imageSeq: data.imageSeq ?? 0,
-              hasImage: !!data.hasImage,
+              screenSeq: data.screenSeq ?? 0,
+              hasFrame: !!data.hasFrame,
             });
           } catch {
-            // The host route is not reachable; keep the last state.
+            // keep the last state
           }
         }
         poll();
-        timer = setInterval(poll, 1500);
+        timer = setInterval(poll, 500);
         return () => { alive = false; clearInterval(timer); };
       }, []);
 
       const live = state.app != null && Date.now() - state.at < LIVE_WINDOW_MS;
-      const imgSrc = state.hasImage ? `/dsh-computer-use/screenshot?t=${state.imageSeq}` : null;
+      const imgSrc = state.hasFrame ? `/dsh-computer-use/screen?t=${state.screenSeq}` : null;
 
       const rootStyle = {
         boxSizing: 'border-box',
@@ -80,7 +89,7 @@ window.__ModuleLoader__.load({
           imgSrc
             ? h('div', { style: screenWrapStyle }, h('img', { style: imgStyle, src: imgSrc, alt: state.app || 'screen' }))
             : h('div', { style: emptyStyle },
-                'No screen captured yet. When the agent controls an app through computer use, its window shows up here live.')
+                'No screen yet. When the agent controls an app through computer use, its window streams here live.')
         ),
         h(
           'div',
@@ -97,10 +106,13 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject('conversation.view', () =>
+        ctx.slots.inject('main', () =>
+          ctx.slots.register({ name: 'main', key: 'computer-use-monitor' }, WindowMonitor)
+        );
+        ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
-            { name: 'conversation.view', id: 'computer-use', order: 40, label: () => 'Computer Use' },
-            (props) => h(MonitorView, props)
+            { name: 'sidebar.panellist', id: 'computer-use-monitor', order: 31, label: () => 'Computer Use' },
+            PanelIcon
           )
         );
       },

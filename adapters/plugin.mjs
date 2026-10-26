@@ -1,7 +1,10 @@
 // DeepSeek Harness (DSH) host plugin: the original runtime's js and js_reset tools, its instructions, its
 // native-app approvals through DSH's question card, and its turn cleanup on DSH's turn end. Self-contained:
 // `commandFrom` points at the bundled macOS launcher, run on the installed ChatGPT app's own Node.
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCuaClient, nativeAppApprovalOptions, nativeAppApprovalResponse } from './client.mjs';
@@ -62,21 +65,6 @@ export function extractTargetApp(code) {
   return null;
 }
 
-/**
- * The most recent screenshot in a `js` tool result: the last image block's base64 and MIME type,
- * or null. This is the live picture of the window the agent is operating.
- */
-export function extractImage(result) {
-  if (!result || !Array.isArray(result.content)) return null;
-  for (let i = result.content.length - 1; i >= 0; i--) {
-    const block = result.content[i];
-    if (block?.type === 'image' && typeof block.data === 'string' && block.data && block.mimeType) {
-      return { data: block.data, mimeType: block.mimeType };
-    }
-  }
-  return null;
-}
-
 const cancel = () => ({ action: 'cancel' });
 
 /** Ask the person through DSH's question card; any refusal, error or free text cancels. */
@@ -108,8 +96,39 @@ export async function apply(ctx, config = {}, deps = {}) {
   // Tool calls in flight -> their agent: an approval is asked in the one agent with a call in flight.
   const inFlight = new Map();
   const log = message => ctx.logger?.warn?.(message);
-  // Sidebar monitor state: the app the agent is targeting, its latest screenshot, and when it changed.
-  const monitor = { app: null, at: 0, image: null, imageSeq: 0 };
+  // Sidebar monitor state: the app the agent is targeting, the live screen frame, and when it changed.
+  const monitor = { app: null, at: 0, screenSeq: 0, captureUntil: 0 };
+
+  // Screen capture loop: grab the agent's front window every 500 ms while a `js` call was recent.
+  // Frames land atomically in `screenFile`; without Screen Recording permission the frame just stays stale.
+  const screenFile = join(tmpdir(), 'dsh-computer-use-screen.jpg');
+  let captureRunning = false;
+  let captureWarned = false;
+  const capture = () => {
+    if (captureRunning || process.platform !== 'darwin' || Date.now() > monitor.captureUntil) return;
+    captureRunning = true;
+    const tmp = `${screenFile}.${process.pid}.${Date.now()}.tmp`;
+    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', tmp], { timeout: 2000 }, (err) => {
+      captureRunning = false;
+      if (err) {
+        if (!captureWarned) {
+          captureWarned = true;
+          log(`Screen capture failed (${err.message}); grant DSH Screen Recording permission in System Settings.`);
+        }
+        try { rmSync(tmp, { force: true }); } catch {}
+        return;
+      }
+      captureWarned = false;
+      try {
+        renameSync(tmp, screenFile);
+        monitor.screenSeq += 1;
+      } catch {
+        try { rmSync(tmp, { force: true }); } catch {}
+      }
+    });
+  };
+  const captureTimer = setInterval(capture, 500);
+  ctx.effect(() => clearInterval(captureTimer), 'dsh-computer-use.screen-capture');
 
   const client = createClient({
     command: commandFrom(config),
@@ -236,19 +255,15 @@ export async function apply(ctx, config = {}, deps = {}) {
         if (tool.name === 'js') {
           const app = extractTargetApp(args?.code);
           if (app) { monitor.app = app; monitor.at = Date.now(); }
+          monitor.captureUntil = Date.now() + 3000;
         } else if (tool.name === 'js_reset') {
-          monitor.app = null; monitor.image = null; monitor.at = Date.now();
+          monitor.app = null; monitor.at = Date.now(); monitor.captureUntil = 0;
         }
         try {
-          const result = await client.call(tool.name, args, {
+          return await persistAudioContent(await client.call(tool.name, args, {
             sessionId: exec.agent.session.id, turnId, toolCallId: exec.callId, signal: exec.signal,
             model: exec.agent.options?.model, reasoningEffort: exec.agent.options?.reasoningEffort,
-          });
-          if (tool.name === 'js') {
-            const image = extractImage(result);
-            if (image) { monitor.image = image; monitor.imageSeq += 1; monitor.at = Date.now(); }
-          }
-          return await persistAudioContent(result);
+          }));
         } finally {
           inFlight.delete(exec);
         }
@@ -277,16 +292,16 @@ export async function apply(ctx, config = {}, deps = {}) {
           res.end(JSON.stringify({
             app: monitor.app,
             at: monitor.at,
-            imageSeq: monitor.imageSeq,
-            hasImage: monitor.image != null,
+            screenSeq: monitor.screenSeq,
+            hasFrame: monitor.screenSeq > 0 && existsSync(screenFile),
           }));
           return;
         }
-        if (pathname === '/dsh-computer-use/screenshot') {
-          if (!monitor.image) { res.statusCode = 404; res.end('no screenshot'); return; }
-          res.setHeader('Content-Type', monitor.image.mimeType);
+        if (pathname === '/dsh-computer-use/screen') {
+          if (!existsSync(screenFile)) { res.statusCode = 404; res.end('no frame'); return; }
+          res.setHeader('Content-Type', 'image/jpeg');
           res.setHeader('Cache-Control', 'no-store');
-          res.end(Buffer.from(monitor.image.data, 'base64'));
+          res.end(readFileSync(screenFile));
           return;
         }
         res.statusCode = 404;
