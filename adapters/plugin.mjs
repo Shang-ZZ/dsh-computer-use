@@ -110,8 +110,10 @@ export async function apply(ctx, config = {}, deps = {}) {
   const capture = () => {
     if (captureRunning || !captureActive || process.platform !== 'darwin') return;
     captureRunning = true;
-    // Resolve the frontmost window id first, then capture only that window.
-    execFile(frontWindowBin, [], { timeout: 2000 }, (err, stdout) => {
+    // Resolve the agent's target window id first (its last getApp target, falling back to the
+    // frontmost window), then capture only that window.
+    const args = monitor.app ? [monitor.app] : [];
+    execFile(frontWindowBin, args, { timeout: 2000 }, (err, stdout) => {
       const id = (!err && stdout) ? String(stdout).trim() : '';
       if (!/^\d+$/.test(id)) { captureRunning = false; return; }
       const tmp = `${screenFile}.${process.pid}.${Date.now()}.jpg`;
