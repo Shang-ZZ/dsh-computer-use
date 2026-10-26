@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
     const LIVE_WINDOW_MS = 15000;
 
     function WindowMonitor() {
-      const [state, setState] = useState({ app: null, at: 0, screenSeq: 0, hasFrame: false });
+      const [state, setState] = useState({ app: null, at: 0, screenSeq: 0, hasFrame: false, active: false });
       useEffect(() => {
         let alive = true;
         let timer;
@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
             if (alive) setState({
               app: data.app ?? null,
               at: data.at ?? 0,
+              active: !!data.active,
               screenSeq: data.screenSeq ?? 0,
               hasFrame: !!data.hasFrame,
             });
@@ -57,8 +58,8 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
-      const live = state.app != null && Date.now() - state.at < LIVE_WINDOW_MS;
-      const imgSrc = state.hasFrame ? `/dsh-computer-use/screen?t=${state.screenSeq}` : null;
+      const live = state.active;
+      const imgSrc = state.active && state.hasFrame ? `/dsh-computer-use/screen?t=${state.screenSeq}` : null;
 
       const rootStyle = {
         boxSizing: 'border-box',
@@ -82,7 +83,7 @@ window.__ModuleLoader__.load({
       const metaStyle = { padding: '10px 14px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 };
       const appNameStyle = { fontWeight: 600, wordBreak: 'break-word' };
       const metaAgeStyle = { fontSize: 12, opacity: 0.6, marginLeft: 'auto' };
-      const emptyStyle = { padding: 24, fontSize: 13, opacity: 0.65, lineHeight: 1.6 };
+      const emptyStyle = { padding: 24, fontSize: 13, lineHeight: 1.7, overflowY: 'auto', minHeight: 0 };
 
       return h(
         'div',
@@ -94,7 +95,13 @@ window.__ModuleLoader__.load({
           imgSrc
             ? h('div', { style: screenWrapStyle }, h('img', { style: imgStyle, src: imgSrc, alt: state.app || 'screen' }))
             : h('div', { style: emptyStyle },
-                'No screen yet. When the agent controls an app through computer use, its window streams here live.')
+                h('div', { style: { fontWeight: 600, marginBottom: 10, fontSize: 14 } }, 'Computer Use 实时监控'),
+                h('div', null, '此面板实时显示 agent 通过 computer use 正在控制的窗口画面。'),
+                h('div', { style: { marginTop: 8 } },
+                  '让 agent 执行一个电脑操作任务（例如「打开计算器并读取显示」），画面就会在这里实时跟随它操作的那个窗口。'),
+                h('div', { style: { marginTop: 14, fontSize: 12, opacity: 0.72 } },
+                  '前提：本机已安装 ChatGPT 桌面应用；并已在「系统设置 → 隐私与安全性 → 屏幕录制」给 DeepSeek Harness 授权。')
+              )
         ),
         h(
           'div',

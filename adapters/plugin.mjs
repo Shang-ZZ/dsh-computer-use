@@ -17,6 +17,8 @@ export const inject = ['tools', 'systemPrompt', 'webServer', 'connection'];
 export const PROMPT_ORDER = 3100;
 export const PROMPT_SECTION = 'dsh-computer-use';
 const QUESTION_ID = 'csu-app-approval';
+// The monitor treats a `js` call within this window as "active"; beyond it the panel shows idle.
+const ACTIVITY_WINDOW_MS = 15000;
 
 /** The launcher argv: `CSU_MCP_COMMAND` (tests), the bundle's configured `command`, or the bundled macOS launcher. */
 export function commandFrom(config) {
@@ -97,7 +99,7 @@ export async function apply(ctx, config = {}, deps = {}) {
   const inFlight = new Map();
   const log = message => ctx.logger?.warn?.(message);
   // Sidebar monitor state: the app the agent is targeting, the live screen frame, and when it changed.
-  const monitor = { app: null, at: 0, screenSeq: 0 };
+  const monitor = { app: null, at: 0, screenSeq: 0, lastActivity: 0 };
   // True while the monitor panel is open: the client flips it via /start and /stop.
   let captureActive = false;
 
@@ -108,7 +110,8 @@ export async function apply(ctx, config = {}, deps = {}) {
   let captureRunning = false;
   let captureWarned = false;
   const capture = () => {
-    if (captureRunning || !captureActive || process.platform !== 'darwin') return;
+    if (captureRunning || !captureActive || process.platform !== 'darwin' ||
+        Date.now() - monitor.lastActivity > ACTIVITY_WINDOW_MS) return;
     captureRunning = true;
     // Resolve the agent's target window id first (its last getApp target, falling back to the
     // frontmost window), then capture only that window.
@@ -265,6 +268,7 @@ export async function apply(ctx, config = {}, deps = {}) {
         if (tool.name === 'js') {
           const app = extractTargetApp(args?.code);
           if (app) { monitor.app = app; monitor.at = Date.now(); }
+          monitor.lastActivity = Date.now();
         } else if (tool.name === 'js_reset') {
           monitor.app = null; monitor.at = Date.now();
         }
@@ -310,6 +314,7 @@ export async function apply(ctx, config = {}, deps = {}) {
           res.end(JSON.stringify({
             app: monitor.app,
             at: monitor.at,
+            active: Date.now() - monitor.lastActivity < ACTIVITY_WINDOW_MS,
             screenSeq: monitor.screenSeq,
             hasFrame: monitor.screenSeq > 0 && existsSync(screenFile),
           }));
