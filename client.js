@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         let alive = true;
         let timer;
+        fetch('/dsh-computer-use/start', { method: 'POST' }).catch(() => {});
         async function poll() {
           try {
             const r = await fetch('/dsh-computer-use/window', { cache: 'no-store' });
@@ -49,7 +50,11 @@ window.__ModuleLoader__.load({
         }
         poll();
         timer = setInterval(poll, 500);
-        return () => { alive = false; clearInterval(timer); };
+        return () => {
+          alive = false;
+          clearInterval(timer);
+          fetch('/dsh-computer-use/stop', { method: 'POST' }).catch(() => {});
+        };
       }, []);
 
       const live = state.app != null && Date.now() - state.at < LIVE_WINDOW_MS;

@@ -28,6 +28,8 @@
     "client.js",
     "adapters/*.mjs",
     "runtime/*.mjs",
+    "runtime/front_window",
+    "runtime/front_window.swift",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",

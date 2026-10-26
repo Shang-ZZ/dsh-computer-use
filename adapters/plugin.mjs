@@ -97,34 +97,42 @@ export async function apply(ctx, config = {}, deps = {}) {
   const inFlight = new Map();
   const log = message => ctx.logger?.warn?.(message);
   // Sidebar monitor state: the app the agent is targeting, the live screen frame, and when it changed.
-  const monitor = { app: null, at: 0, screenSeq: 0, captureUntil: 0 };
+  const monitor = { app: null, at: 0, screenSeq: 0 };
+  // True while the monitor panel is open: the client flips it via /start and /stop.
+  let captureActive = false;
 
-  // Screen capture loop: grab the agent's front window every 500 ms while a `js` call was recent.
+  // Screen capture loop: every 500 ms, resolve the frontmost window and capture just that window.
   // Frames land atomically in `screenFile`; without Screen Recording permission the frame just stays stale.
   const screenFile = join(tmpdir(), 'dsh-computer-use-screen.jpg');
+  const frontWindowBin = fileURLToPath(new URL('../runtime/front_window', import.meta.url));
   let captureRunning = false;
   let captureWarned = false;
   const capture = () => {
-    if (captureRunning || process.platform !== 'darwin' || Date.now() > monitor.captureUntil) return;
+    if (captureRunning || !captureActive || process.platform !== 'darwin') return;
     captureRunning = true;
-    const tmp = `${screenFile}.${process.pid}.${Date.now()}.jpg`;
-    execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', tmp], { timeout: 2000 }, (err) => {
-      captureRunning = false;
-      if (err) {
-        if (!captureWarned) {
-          captureWarned = true;
-          log(`Screen capture failed (${err.message}); grant DSH Screen Recording permission in System Settings.`);
+    // Resolve the frontmost window id first, then capture only that window.
+    execFile(frontWindowBin, [], { timeout: 2000 }, (err, stdout) => {
+      const id = (!err && stdout) ? String(stdout).trim() : '';
+      if (!/^\d+$/.test(id)) { captureRunning = false; return; }
+      const tmp = `${screenFile}.${process.pid}.${Date.now()}.jpg`;
+      execFile('/usr/sbin/screencapture', ['-l', id, '-o', '-x', '-t', 'jpg', tmp], { timeout: 2000 }, (err2) => {
+        captureRunning = false;
+        if (err2) {
+          if (!captureWarned) {
+            captureWarned = true;
+            log(`Screen capture failed (${err2.message}); grant DSH Screen Recording permission in System Settings.`);
+          }
+          try { rmSync(tmp, { force: true }); } catch {}
+          return;
         }
-        try { rmSync(tmp, { force: true }); } catch {}
-        return;
-      }
-      captureWarned = false;
-      try {
-        renameSync(tmp, screenFile);
-        monitor.screenSeq += 1;
-      } catch {
-        try { rmSync(tmp, { force: true }); } catch {}
-      }
+        captureWarned = false;
+        try {
+          renameSync(tmp, screenFile);
+          monitor.screenSeq += 1;
+        } catch {
+          try { rmSync(tmp, { force: true }); } catch {}
+        }
+      });
     });
   };
   const captureTimer = setInterval(capture, 500);
@@ -255,9 +263,8 @@ export async function apply(ctx, config = {}, deps = {}) {
         if (tool.name === 'js') {
           const app = extractTargetApp(args?.code);
           if (app) { monitor.app = app; monitor.at = Date.now(); }
-          monitor.captureUntil = Date.now() + 3000;
         } else if (tool.name === 'js_reset') {
-          monitor.app = null; monitor.at = Date.now(); monitor.captureUntil = 0;
+          monitor.app = null; monitor.at = Date.now();
         }
         try {
           return await persistAudioContent(await client.call(tool.name, args, {
@@ -286,6 +293,15 @@ export async function apply(ctx, config = {}, deps = {}) {
       handler(req, res) {
         if (rejected(req, res)) return;
         const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+        if (pathname === '/dsh-computer-use/start') {
+          captureActive = true;
+          capture();
+          res.statusCode = 200; res.end('ok'); return;
+        }
+        if (pathname === '/dsh-computer-use/stop') {
+          captureActive = false;
+          res.statusCode = 200; res.end('ok'); return;
+        }
         if (pathname === '/dsh-computer-use/window') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
           res.setHeader('Cache-Control', 'no-store');
