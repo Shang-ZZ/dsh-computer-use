@@ -107,7 +107,7 @@ export async function apply(ctx, config = {}, deps = {}) {
   const capture = () => {
     if (captureRunning || process.platform !== 'darwin' || Date.now() > monitor.captureUntil) return;
     captureRunning = true;
-    const tmp = `${screenFile}.${process.pid}.${Date.now()}.tmp`;
+    const tmp = `${screenFile}.${process.pid}.${Date.now()}.jpg`;
     execFile('/usr/sbin/screencapture', ['-x', '-t', 'jpg', tmp], { timeout: 2000 }, (err) => {
       captureRunning = false;
       if (err) {
@@ -128,7 +128,7 @@ export async function apply(ctx, config = {}, deps = {}) {
     });
   };
   const captureTimer = setInterval(capture, 500);
-  ctx.effect(() => clearInterval(captureTimer), 'dsh-computer-use.screen-capture');
+  ctx.effect(() => () => clearInterval(captureTimer), 'dsh-computer-use.screen-capture');
 
   const client = createClient({
     command: commandFrom(config),
